@@ -201,7 +201,7 @@ public final class IndexCreator {
 
     public void createIndex(
             final Context c, final String source, final DatabaseHelper helper,
-            final StringBuilder indexBuilder, final boolean onMemory) throws SQLException {
+            final StringBuilder indexBuilder) throws SQLException {
         final CharSequence text = normalize(source);
 
         indexBuilder.append(text).append(" ");
@@ -210,15 +210,15 @@ public final class IndexCreator {
         mEnglishBuilder.setLength(0);
 
         if (!isHalf(text)) {
-            appendDividedWords(text, helper, REG_WORD, 3, Dictionary.TYPE_JA, true, onMemory);
+            appendDividedWords(text, helper, REG_WORD, 3, Dictionary.TYPE_JA, true);
             if (mTempBuilder1.length() == 0) {
-                appendDividedWords(text, helper, REG_KANJI, 1, Dictionary.TYPE_JA, true, onMemory);
+                appendDividedWords(text, helper, REG_KANJI, 1, Dictionary.TYPE_JA, true);
             }
             if (mTempBuilder1.length() == 0) mTempBuilder1.append(text).append(" ");
 
-            appendDividedWords(text, helper, REG_KANA, 2, Dictionary.TYPE_EN, true, onMemory);
+            appendDividedWords(text, helper, REG_KANA, 2, Dictionary.TYPE_EN, true);
         }
-        appendDividedWords(text, helper, REG_ENGLISH, 3, Dictionary.TYPE_EN, false, onMemory);
+        appendDividedWords(text, helper, REG_ENGLISH, 3, Dictionary.TYPE_EN, false);
 
         mTempBuilder2.setLength(0);
         convertKata2Hira(mTempBuilder1, mTempBuilder2);
@@ -264,8 +264,8 @@ public final class IndexCreator {
     }
 
     private void appendDividedWords(
-            final CharSequence text, final DatabaseHelper helper, final String reg,
-            final int endLength, final int type, final boolean isKey, final boolean onMemory)
+            final CharSequence text, final DatabaseHelper helper,
+            final String reg, final int endLength, final int type, final boolean isKey)
                     throws SQLException {
         final Pattern pattern = Pattern.compile(reg);
         final Matcher matcher = pattern.matcher(text);
@@ -276,13 +276,13 @@ public final class IndexCreator {
         while (matcher.find()) {
             String word = matcher.group();
 
-            Dictionary dic = findDic(dao, word, type, isKey, onMemory);
+            Dictionary dic = findDic(dao, word, type, isKey);
             if (dic == null) {
                 int beginLength = word.length() - 1;
                 for (int j = beginLength; j >= endLength; j--) {
                     for (int i = 0; i < beginLength - j + 2; i++) {
                         final String subWord = word.substring(i, i + j);
-                        dic = findDic(dao, subWord, type, isKey, onMemory);
+                        dic = findDic(dao, subWord, type, isKey);
                         if (dic == null) continue;
 
                         word = word.replace(subWord, isKey ? dic.value : dic.key);
@@ -320,7 +320,7 @@ public final class IndexCreator {
 
     private Dictionary findDic(
             final Dao<Dictionary, Integer> dao, final String word,
-            final int type, final boolean isKey, final boolean onMemory) throws SQLException {
+            final int type, final boolean isKey) throws SQLException {
         final String keyName = isKey ? Dictionary.KEY : Dictionary.VALUE;
 
         return dao.queryBuilder()
