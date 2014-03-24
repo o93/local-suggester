@@ -241,26 +241,32 @@ public final class IndexCreator {
         initializeBuffers();
     }
 
-    public void initializeDics(final Context c) throws SQLException {
+    public boolean initializeDics(final Context c) {
         final ArrayList<Dictionary> dics = new ArrayList<Dictionary>();
 
-        readDics(c, "dic_ja.zip", Dictionary.TYPE_JA, dics);
-        readDics(c, "dic_en.zip", Dictionary.TYPE_EN, dics);
+        try {
+            readDics(c, R.raw.dic_ja, Dictionary.TYPE_JA, dics);
+            readDics(c, R.raw.dic_en, Dictionary.TYPE_EN, dics);
 
-        final DatabaseHelper helper = DatabaseHelper.getInstance(c);
-        TransactionManager.callInTransaction(
-                helper.getConnectionSource(), new Callable<Void>() {
-                    @Override
-                    public Void call() throws Exception {
-                        helper.getDao(Dictionary.class).deleteBuilder().delete();
+            final DatabaseHelper helper = DatabaseHelper.getInstance(c);
+            TransactionManager.callInTransaction(
+                    helper.getConnectionSource(), new Callable<Void>() {
+                        @Override
+                        public Void call() throws Exception {
+                            helper.getDao(Dictionary.class).deleteBuilder().delete();
 
-                        for (Dictionary dic : dics) {
-                            helper.getDao(Dictionary.class).create(dic);
+                            for (Dictionary dic : dics) {
+                                helper.getDao(Dictionary.class).create(dic);
+                            }
+                            Log.d(TAG, "dics.size:" + dics.size());
+                            return null;
                         }
-                        Log.d(TAG, "dics.size:" + dics.size());
-                        return null;
-                    }
-        });
+            });
+            return true;
+        } catch (Throwable e) {
+            Log.e(TAG, e.toString());
+            return false;
+        }
     }
 
     private void appendDividedWords(
@@ -405,14 +411,14 @@ public final class IndexCreator {
     }
 
     private static void readDics(
-            final Context c, final String fileName, final int type,
+            final Context c, final int resourceId, final int type,
             final ArrayList<Dictionary> dics) {
         InputStream is = null;
         BufferedReader reader = null;
         ZipInputStream zis = null;
 
         try {
-            is = c.getAssets().open(fileName);
+            is = c.getResources().openRawResource(resourceId);
             zis = new ZipInputStream(is);
             reader = new BufferedReader(new InputStreamReader(zis));
 
