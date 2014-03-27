@@ -200,7 +200,7 @@ public final class IndexCreator {
     }
 
     public void createIndex(
-            final Context c, final String source, final DatabaseHelper helper,
+            final Context c, final String source, final DictionaryDatabaseHelper helper,
             final StringBuilder indexBuilder) throws SQLException {
         final CharSequence text = normalize(source);
 
@@ -209,7 +209,9 @@ public final class IndexCreator {
         mTempBuilder1.setLength(0);
         mEnglishBuilder.setLength(0);
 
-        if (!isHalf(text)) {
+        if (isHalf(text)) {
+            mTempBuilder1.append(text).append(" ");
+        } else {
             appendDividedWords(text, helper, REG_WORD, 3, Dictionary.TYPE_JA, true);
             if (mTempBuilder1.length() == 0) {
                 appendDividedWords(text, helper, REG_KANJI, 1, Dictionary.TYPE_JA, true);
@@ -248,7 +250,7 @@ public final class IndexCreator {
             readDics(c, R.raw.dic_ja, Dictionary.TYPE_JA, dics);
             readDics(c, R.raw.dic_en, Dictionary.TYPE_EN, dics);
 
-            final DatabaseHelper helper = DatabaseHelper.getInstance(c);
+            final DictionaryDatabaseHelper helper = DictionaryDatabaseHelper.getInstance(c);
             TransactionManager.callInTransaction(
                     helper.getConnectionSource(), new Callable<Void>() {
                         @Override
@@ -270,7 +272,7 @@ public final class IndexCreator {
     }
 
     private void appendDividedWords(
-            final CharSequence text, final DatabaseHelper helper,
+            final CharSequence text, final DictionaryDatabaseHelper helper,
             final String reg, final int endLength, final int type, final boolean isKey)
                     throws SQLException {
         final Pattern pattern = Pattern.compile(reg);
