@@ -175,7 +175,7 @@ public final class IndexCreator {
         initializeBuffers();
     }
 
-    public String[] createSearchTexts(final String source) {
+    public synchronized String[] createSearchTexts(final String source) {
         final String[] texts = new String[2];
         CharSequence base = normalize(source);
         texts[0] = base.toString();
@@ -199,7 +199,7 @@ public final class IndexCreator {
         return texts;
     }
 
-    public void createIndex(
+    public synchronized void createIndex(
             final Context c, final String source, final DictionaryDatabaseHelper helper,
             final StringBuilder indexBuilder) throws SQLException {
         final CharSequence text = normalize(source);
@@ -243,7 +243,7 @@ public final class IndexCreator {
         initializeBuffers();
     }
 
-    public boolean initializeDics(final Context c) {
+    public synchronized boolean initializeDics(final Context c) {
         final ArrayList<Dictionary> dics = new ArrayList<Dictionary>();
 
         try {
@@ -255,10 +255,11 @@ public final class IndexCreator {
                     helper.getConnectionSource(), new Callable<Void>() {
                         @Override
                         public Void call() throws Exception {
-                            helper.getDao(Dictionary.class).deleteBuilder().delete();
+                            final Dao<Dictionary, Integer> dao = helper.getDao(Dictionary.class);
+                            dao.deleteBuilder().delete();
 
                             for (Dictionary dic : dics) {
-                                helper.getDao(Dictionary.class).create(dic);
+                                dao.create(dic);
                             }
                             Log.d(TAG, "dics.size:" + dics.size());
                             return null;
