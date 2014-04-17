@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
@@ -37,6 +38,9 @@ public final class IndexCreator {
     private static final String REG_HALF = "[ -~｡-ﾟ]+";
     private static IndexCreator sInstance;
 
+    private static final int TYPE_EN = 0;
+    private static final int TYPE_JA = 1;
+
     /**
      * インスタンスを取得.
      * @return インスタンス
@@ -53,6 +57,9 @@ public final class IndexCreator {
     private StringBuilder mTempBuilder1;
     private StringBuilder mTempBuilder2;
     private StringBuilder mEnglishBuilder;
+
+    private final HashMap<CharSequence, DicEn> enDicKeyMap;
+    private final HashMap<CharSequence, DicEn> enDicValueMap;
 
     private IndexCreator() {
         k2RMap = new HashMap<Character, CharSequence>();
@@ -173,6 +180,9 @@ public final class IndexCreator {
         lastMap.put("wh", "u");
 
         initializeBuffers();
+
+        enDicKeyMap = new HashMap<CharSequence, DicEn>();
+        enDicValueMap = new HashMap<CharSequence, DicEn>();
     }
 
     public synchronized String[] createSearchTexts(final String source) {
@@ -200,7 +210,8 @@ public final class IndexCreator {
     }
 
     public synchronized void createIndex(
-            final Context c, final String source, final DictionaryDatabaseHelper helper,
+            final Context c, final String source,
+            final Dao<DicJa, Integer> jaDao, final Dao<DicEn, Integer> enDao,
             final StringBuilder indexBuilder) throws SQLException {
         final CharSequence text = normalize(source);
 
@@ -212,15 +223,15 @@ public final class IndexCreator {
         if (isHalf(text)) {
             mTempBuilder1.append(text).append(" ");
         } else {
-            appendDividedWords(text, helper, REG_WORD, 3, Dictionary.TYPE_JA, true);
+            appendDividedWords(text, jaDao, enDao, REG_WORD, 3, TYPE_JA, true);
             if (mTempBuilder1.length() == 0) {
-                appendDividedWords(text, helper, REG_KANJI, 1, Dictionary.TYPE_JA, true);
+                appendDividedWords(text, jaDao, enDao, REG_KANJI, 1, TYPE_JA, true);
             }
             if (mTempBuilder1.length() == 0) mTempBuilder1.append(text).append(" ");
 
-            appendDividedWords(text, helper, REG_KANA, 2, Dictionary.TYPE_EN, true);
+            appendDividedWords(text, jaDao, enDao, REG_KANA, 2, TYPE_EN, true);
         }
-        appendDividedWords(text, helper, REG_ENGLISH, 3, Dictionary.TYPE_EN, false);
+        appendDividedWords(text, jaDao, enDao, REG_ENGLISH, 3, TYPE_EN, false);
 
         mTempBuilder2.setLength(0);
         convertKata2Hira(mTempBuilder1, mTempBuilder2);
@@ -239,29 +250,39 @@ public final class IndexCreator {
                 source.trim().toLowerCase(Locale.ENGLISH), Normalizer.Form.NFKC);
     }
 
-    public void clearBuffers() {
+    public void clear() {
         initializeBuffers();
+
+        enDicKeyMap.clear();
+        enDicValueMap.clear();
     }
 
     public synchronized boolean initializeDics(final Context c) {
-        final ArrayList<Dictionary> dics = new ArrayList<Dictionary>();
+        final ArrayList<DicJa> dicsJa = new ArrayList<DicJa>();
+        final ArrayList<DicEn> dicsEn = new ArrayList<DicEn>();
 
         try {
-            readDics(c, R.raw.dic_ja, Dictionary.TYPE_JA, dics);
-            readDics(c, R.raw.dic_en, Dictionary.TYPE_EN, dics);
+            readDicsJa(c, R.raw.dic_ja, dicsJa);
+            readDicsEn(c, R.raw.dic_en, dicsEn);
 
-            final DictionaryDatabaseHelper helper = DictionaryDatabaseHelper.getInstance(c);
+            final DicDatabaseHelper helper = DicDatabaseHelper.getInstance(c);
             TransactionManager.callInTransaction(
                     helper.getConnectionSource(), new Callable<Void>() {
                         @Override
                         public Void call() throws Exception {
-                            final Dao<Dictionary, Integer> dao = helper.getDao(Dictionary.class);
+                            final Dao<DicJa, Integer> dao = helper.getDao(DicJa.class);
                             dao.deleteBuilder().delete();
 
-                            for (Dictionary dic : dics) {
+                            for (DicJa dic : dicsJa) {
                                 dao.create(dic);
                             }
-                            Log.d(TAG, "dics.size:" + dics.size());
+                            final Dao<DicEn, Integer> enDao = helper.getDao(DicEn.class);
+                            enDao.deleteBuilder().delete();
+
+                            for (DicEn dic : dicsEn) {
+                                enDao.create(dic);
+                            }
+                            Log.d(TAG, "dics.size ja:" + dicsJa.size() + " en:" + dicsEn.size());
                             return null;
                         }
             });
@@ -273,41 +294,22 @@ public final class IndexCreator {
     }
 
     private void appendDividedWords(
-            final CharSequence text, final DictionaryDatabaseHelper helper,
+            final CharSequence text,
+            final Dao<DicJa, Integer> jaDao, final Dao<DicEn, Integer> enDao,
             final String reg, final int endLength, final int type, final boolean isKey)
                     throws SQLException {
         final Pattern pattern = Pattern.compile(reg);
         final Matcher matcher = pattern.matcher(text);
-        final Dao<Dictionary, Integer> dao = helper.getDao(Dictionary.class);
         mTempBuilder2.setLength(0);
 
         int replaceChangedIndex = 0;
         while (matcher.find()) {
-            String word = matcher.group();
-
-            Dictionary dic = findDic(dao, word, type, isKey);
-            if (dic == null) {
-                int beginLength = word.length() - 1;
-                for (int j = beginLength; j >= endLength; j--) {
-                    for (int i = 0; i < beginLength - j + 2; i++) {
-                        final String subWord = word.substring(i, i + j);
-                        dic = findDic(dao, subWord, type, isKey);
-                        if (dic == null) continue;
-
-                        word = word.replace(subWord, isKey ? dic.value : dic.key);
-                        beginLength = word.length() - 1;
-                        j = beginLength;
-                        i = 0;
-                    }
-                }
-                if (!word.equals(matcher.group())) {
-                    replaceWord(text, mTempBuilder2, matcher, replaceChangedIndex, word);
-                    replaceChangedIndex += word.length() - matcher.end() + matcher.start();
-                }
-            } else {
-                final String value = isKey ? dic.value : dic.key;
-                replaceWord(text, mTempBuilder2, matcher, replaceChangedIndex, value);
-                replaceChangedIndex += value.length() - matcher.end() + matcher.start();
+            if (type == TYPE_JA) {
+                replaceChangedIndex = replaceWordsJa(
+                        text, jaDao, endLength, isKey, matcher, replaceChangedIndex);
+            } else if (type == TYPE_EN) {
+                replaceChangedIndex = replaceWordsEn(
+                        text, enDao, endLength, isKey, matcher, replaceChangedIndex);
             }
         }
         if (mTempBuilder2.length() > 0) {
@@ -316,6 +318,72 @@ public final class IndexCreator {
 
             if (isHalf(dividedWords)) mEnglishBuilder.append(dividedWords).append(" ");
         }
+    }
+
+    private int replaceWordsJa(
+            final CharSequence text, final Dao<DicJa, Integer> jaDao, final int endLength,
+            final boolean isKey, final Matcher matcher, int replaceChangedIndex)
+            throws SQLException {
+        String word = matcher.group();
+        DicJa dic = findDicJa(jaDao, word);
+
+        if (dic == null) {
+            int beginLength = word.length() - 1;
+            for (int j = beginLength; j >= endLength; j--) {
+                for (int i = 0; i < beginLength - j + 2; i++) {
+                    final String subWord = word.substring(i, i + j);
+                    dic = findDicJa(jaDao, subWord);
+                    if (dic == null) continue;
+
+                    word = word.replace(subWord, isKey ? dic.value : dic.key);
+                    beginLength = word.length() - 1;
+                    j = beginLength;
+                    i = 0;
+                }
+            }
+            if (!word.equals(matcher.group())) {
+                replaceWord(text, mTempBuilder2, matcher, replaceChangedIndex, word);
+                replaceChangedIndex += word.length() - matcher.end() + matcher.start();
+            }
+        } else {
+            final String value = isKey ? dic.value : dic.key;
+            replaceWord(text, mTempBuilder2, matcher, replaceChangedIndex, value);
+            replaceChangedIndex += value.length() - matcher.end() + matcher.start();
+        }
+        return replaceChangedIndex;
+    }
+
+    private int replaceWordsEn(
+            final CharSequence text, final Dao<DicEn, Integer> enDao, final int endLength,
+            final boolean isKey, final Matcher matcher, int replaceChangedIndex)
+            throws SQLException {
+        String word = matcher.group();
+        DicEn dic = findDicEn(enDao, word, isKey);
+
+        if (dic == null) {
+            int beginLength = word.length() - 1;
+            for (int j = beginLength; j >= endLength; j--) {
+                for (int i = 0; i < beginLength - j + 2; i++) {
+                    final String subWord = word.substring(i, i + j);
+                    dic = findDicEn(enDao, subWord, isKey);
+                    if (dic == null) continue;
+
+                    word = word.replace(subWord, isKey ? dic.value : dic.key);
+                    beginLength = word.length() - 1;
+                    j = beginLength;
+                    i = 0;
+                }
+            }
+            if (!word.equals(matcher.group())) {
+                replaceWord(text, mTempBuilder2, matcher, replaceChangedIndex, word);
+                replaceChangedIndex += word.length() - matcher.end() + matcher.start();
+            }
+        } else {
+            final String value = isKey ? dic.value : dic.key;
+            replaceWord(text, mTempBuilder2, matcher, replaceChangedIndex, value);
+            replaceChangedIndex += value.length() - matcher.end() + matcher.start();
+        }
+        return replaceChangedIndex;
     }
 
     private void replaceWord(
@@ -327,15 +395,26 @@ public final class IndexCreator {
                 matcher.end() + replaceChangedIndex, word);
     }
 
-    private Dictionary findDic(
-            final Dao<Dictionary, Integer> dao, final String word,
-            final int type, final boolean isKey) throws SQLException {
-        final String keyName = isKey ? Dictionary.KEY : Dictionary.VALUE;
+    private DicJa findDicJa(final Dao<DicJa, Integer> dao, final String word) throws SQLException {
+        return dao.queryBuilder().orderBy(DicJa.PRIORITY, true)
+                .where().eq(DicJa.KEY, word).queryForFirst();
+    }
 
-        return dao.queryBuilder()
-                .orderBy(Dictionary.PRIORITY, true)
-                .where().eq(keyName, word).and().eq(Dictionary.TYPE, type)
-                .queryForFirst();
+    private DicEn findDicEn(
+            final Dao<DicEn, Integer> dao, final String word, final boolean isKey)
+                    throws SQLException {
+        if (enDicKeyMap.size() == 0) {
+            List<DicEn> dics = dao.queryForAll();
+            for (DicEn dic : dics) {
+                enDicKeyMap.put(dic.key, dic);
+                enDicValueMap.put(dic.value, dic);
+            }
+        }
+        if (isKey) {
+            return enDicKeyMap.get(word);
+        } else {
+            return enDicValueMap.get(word);
+        }
     }
 
     private void initializeBuffers() {
@@ -413,9 +492,8 @@ public final class IndexCreator {
         return pattern.matcher(source).matches();
     }
 
-    private static void readDics(
-            final Context c, final int resourceId, final int type,
-            final ArrayList<Dictionary> dics) {
+    private static void readDicsJa(
+            final Context c, final int resourceId, final ArrayList<DicJa> dics) {
         InputStream is = null;
         BufferedReader reader = null;
         ZipInputStream zis = null;
@@ -433,11 +511,51 @@ public final class IndexCreator {
 
                     final String value = words[0];
                     for (int i = 1; i < words.length; i++) {
-                        final Dictionary dic = new Dictionary();
+                        final DicJa dic = new DicJa();
                         dic.key = words[i];
                         dic.value = value;
-                        dic.type = type;
                         dic.priority = words.length - 1;
+                        dics.add(dic);
+                    }
+                }
+            }
+        } catch (FileNotFoundException e) {
+            Log.e(TAG, e.toString());
+        } catch (IOException e) {
+            Log.e(TAG, e.toString());
+        } finally {
+            try {
+                if (zis != null) zis.closeEntry();
+                if (reader != null) reader.close();
+                if (is != null) is.close();
+            } catch (IOException e) {
+                Log.e(TAG, e.toString());
+            }
+        }
+    }
+
+    private static void readDicsEn(
+            final Context c, final int resourceId, final ArrayList<DicEn> dics) {
+        InputStream is = null;
+        BufferedReader reader = null;
+        ZipInputStream zis = null;
+
+        try {
+            is = c.getResources().openRawResource(resourceId);
+            zis = new ZipInputStream(is);
+            reader = new BufferedReader(new InputStreamReader(zis));
+
+            String line = null;
+            if (zis.getNextEntry() != null) {
+                while ((line = reader.readLine()) != null) {
+                    final String[] words = line.split("/");
+                    if (words.length < 2) continue;
+
+                    final String value = words[0];
+                    for (int i = 1; i < words.length; i++) {
+                        final DicEn dic = new DicEn();
+                        dic.key = words[i];
+                        dic.value = value;
                         dics.add(dic);
                     }
                 }
