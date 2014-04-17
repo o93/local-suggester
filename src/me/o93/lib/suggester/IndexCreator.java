@@ -272,7 +272,7 @@ public final class IndexCreator {
                         public Void call() throws Exception {
                             final Dao<DicJa, Integer> dao = helper.getDao(DicJa.class);
                             dao.deleteBuilder().delete();
-
+                            Log.d(TAG, "dics insert begin");
                             for (DicJa dic : dicsJa) {
                                 dao.create(dic);
                             }
