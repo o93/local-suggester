@@ -16,7 +16,7 @@ public class Dictionary {
     public static final int TYPE_EN = 1;
 
     @DatabaseField(generatedId = true)
-    private Integer id;
+    private Integer _id;
 
     @DatabaseField(columnName = KEY, canBeNull = false, index = true, indexName = "DictionaryKey")
     public String key;
